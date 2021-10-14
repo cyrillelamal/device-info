@@ -1,36 +1,32 @@
 package com.cyrillelamal;
 
-import org.hid4java.HidDevice;
-import org.hid4java.HidManager;
-import org.hid4java.HidServices;
-import org.hid4java.HidServicesListener;
-import org.hid4java.event.HidServicesEvent;
+import com.cyrillelamal.commands.Detect;
+import com.cyrillelamal.commands.Observe;
+import lombok.Getter;
+import lombok.Setter;
 import picocli.CommandLine;
+import picocli.CommandLine.Command;
+import picocli.CommandLine.Option;
 
 import java.util.Arrays;
-import java.util.Optional;
 import java.util.concurrent.Callable;
 
-@CommandLine.Command(
-        name = "device-info",
-        description = "You can use the application in 2 ways:\n" +
-                "1. Run the application without any options to detect attached and detached devices in real-time." +
-                "2. Run the application with vendor-id and product-id options to observe the specified device.",
-        version = DeviceInfo.VERSION
-)
+@Command(name = "device-info", version = DeviceInfo.VERSION)
+@Getter
+@Setter
 public class DeviceInfo implements Callable<Integer> {
-    public static final String VERSION = "1.0.0";
+    public static final String VERSION = "1.1.0";
 
-    @CommandLine.Option(names = {"-v", "--vendor-id"}, description = "vendor id, e.g. \"0x45e\"")
-    private Optional<String> vendorId; // int
-    @CommandLine.Option(names = {"-p", "--product-id"}, description = "product id, e.g. \"0x28e\"")
-    private Optional<String> productId; // int
-    @CommandLine.Option(names = {"-s", "--serial"}, description = "serial number")
-    private Optional<String> serialNumber; // ?String
+    @Option(names = {"-v", "--vendor-id"}, description = "Vendor id, e.g. \"0x45e\"")
+    private String vendorId = null;
+    @Option(names = {"-p", "--product-id"}, description = "Product id, e.g. \"0x28e\"")
+    private String productId = null;
+    @Option(names = {"-s", "--serial"}, description = "Serial number")
+    private String serialNumber = null;
 
-    @CommandLine.Option(names = {"-V", "--version"}, versionHelp = true, description = "display version info")
+    @Option(names = {"-V", "--version"}, versionHelp = true, description = "This help")
     private boolean versionInfoRequested = false;
-    @CommandLine.Option(names = {"-h", "--help"}, usageHelp = true, description = "display this help message")
+    @Option(names = {"-h", "--help"}, usageHelp = true, description = "Version number")
     private boolean usageHelpRequested = false;
 
     public static void main(String[] args) {
@@ -40,80 +36,61 @@ public class DeviceInfo implements Callable<Integer> {
     }
 
     @Override
-    public Integer call() throws InterruptedException {
-        final HidServices services = HidManager.getHidServices();
+    public Integer call() {
+        try {
+            Arrays.stream(this.getCommands())
+                    .map(Thread::new)
+                    .forEach(Thread::start);
 
-        final var detect = new Thread(() -> {
-            System.out.println("Detecting HIDs");
-            System.out.println("Use Ctrl-C to exit");
+            System.out.println("Use Ctrl+C to exit");
 
-            services.addHidServicesListener(new HidServicesListener() {
-                @Override
-                public void hidDeviceAttached(final HidServicesEvent event) {
-                    System.out.println("Attached: " + event.toString());
-                }
-
-                @Override
-                public void hidDeviceDetached(final HidServicesEvent event) {
-                    System.out.println("Detached: " + event.toString());
-                }
-
-                @Override
-                public void hidFailure(final HidServicesEvent event) {
-                    System.out.println("Fail: " + event.toString());
-                }
-            });
-
-            while (true) ;
-        });
-
-        final var observe = new Thread(() -> {
-            if (this.vendorId.isPresent() && this.productId.isPresent()) {
-                int vendorId;
-                try {
-                    vendorId = Integer.decode(this.vendorId.get());
-                } catch (NumberFormatException e) {
-                    System.out.printf("Invalid vendorId: %s\n", e.getMessage());
-                    return;
-                }
-                int productId;
-                try {
-                    productId = Integer.decode(this.productId.get());
-                } catch (NumberFormatException e) {
-                    System.out.printf("Invalid vendorId: %s", e.getMessage());
-                    return;
-                }
-                final var serialNumber = this.serialNumber.orElse(null);
-
-                while (true) {
-                    final HidDevice device = services.getHidDevice(vendorId, productId, serialNumber);
-
-                    if (device == null) {
-                        System.out.printf("Cannot find device [vendorId=%x, productId=%x, serialNumber=%s]\n", vendorId, productId, serialNumber);
-                        continue;
-                    }
-
-                    System.out.println("Observing: " + device);
-
-                    final var buffer = new byte[256];
-                    while (device.isOpen()) {
-                        final int read = device.read(buffer);
-                        if (read < 0) {
-                            break;
-                        } else if (read > 0) {
-                            System.out.println(Arrays.toString(buffer));
-                        }
-                    }
+            while (true) {
+                if (Thread.currentThread().isInterrupted()) {
+                    break;
                 }
             }
-        });
-
-        detect.start();
-        observe.start();
-
-        detect.join();
-        observe.join();
+        } catch (Exception e) {
+            System.err.println(e.getMessage());
+            return 1;
+        }
 
         return 0;
+    }
+
+    protected Runnable[] getCommands() throws NumberFormatException {
+        return new Runnable[]{
+                new Detect(),
+                new Observe(this.getVendorId(), this.getProductId(), this.getSerialNumber())
+        };
+    }
+
+    protected Integer getVendorId() throws NumberFormatException {
+        if (null == this.vendorId) {
+            return null;
+        }
+
+        try {
+            return Integer.decode(this.vendorId);
+        } catch (NumberFormatException e) {
+            final var msg = "Bad vendor id \"%s\"%n".formatted(this.vendorId);
+            System.out.println(msg);
+            System.err.println(msg);
+            throw e;
+        }
+    }
+
+    protected Integer getProductId() throws NumberFormatException {
+        if (null == this.productId) {
+            return null;
+        }
+
+        try {
+            return Integer.decode(this.productId);
+        } catch (NumberFormatException e) {
+            final var msg = "Bad product id \"%s\"%n".formatted(this.productId);
+            System.out.println(msg);
+            System.err.println(msg);
+            throw e;
+        }
     }
 }
